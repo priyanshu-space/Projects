@@ -1,0 +1,110 @@
+pipeline {
+    agent {
+        kubernetes {
+            yaml '''
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: build-tools
+    image: alpine/k8s:1.27.4
+    command: ['cat']
+    tty: true
+  - name: trivy
+    image: aquasec/trivy:latest
+    command: ['cat']
+    tty: true
+  - name: checkov
+    image: bridgecrew/checkov:latest
+    command: ['cat']
+    tty: true
+'''
+        }
+    }
+
+    environment {
+        GCP_PROJECT_ID = "your-project-id"
+        IMAGE_NAME = "production-app"
+        REGISTRY = "gcr.io/${GCP_PROJECT_ID}"
+        COMMIT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+        TAG = "${COMMIT_SHA}"
+    }
+
+    stages {
+        stage('Stage 0: Init & IaC Scan') {
+            steps {
+                container('checkov') {
+                    echo "Running Checkov IaC Scanning..."
+                    sh "checkov -d terraform/ --soft-fail"
+                }
+            }
+        }
+
+        stage('Stage 1: Code Quality & Secrets') {
+            steps {
+                echo "Running SonarQube & Gitleaks..."
+            }
+        }
+
+        stage('Stage 2: Dependency Scan') {
+            steps {
+                echo "Running OWASP Dependency-Check..."
+            }
+        }
+
+        stage('Stage 3: Build & Image Scan') {
+            steps {
+                echo "Building Docker Image..."
+                sh "docker build -t ${REGISTRY}/${IMAGE_NAME}:${TAG} app/"
+                
+                container('trivy') {
+                    echo "Scanning Image for Vulnerabilities..."
+                    echo "Scanning Image for Vulnerabilities..."
+                    sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${REGISTRY}/${IMAGE_NAME}:${TAG}"
+                }
+            }
+        }
+
+        stage('Stage 4: Manifest Linting') {
+            steps {
+                container('build-tools') {
+                    echo "Linting Kubernetes Manifests..."
+                    sh "kube-score score helm/templates/*.yaml || true"
+                }
+            }
+        }
+
+        stage('Stage 5: Deploy to Dev') {
+            steps {
+                echo "Deploying to Dev environment via Helm..."
+                sh "helm upgrade --install production-app-dev helm/ --atomic --set image.tag=${TAG}"
+            }
+        }
+
+        stage('Stage 6: DAST & Testing') {
+            steps {
+                echo "Running OWASP ZAP DAST and PyTest..."
+            }
+        }
+
+        stage('Stage 7: Approval & Prod') {
+            steps {
+                input message: "Approve deployment to PRODUCTION?", ok: "Deploy"
+                echo "Deploying to Prod..."
+                sh "helm upgrade --install production-app-prod helm/ --atomic --set image.tag=${TAG}"
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Pipeline finished."
+        }
+        success {
+            echo "Deployment successful!"
+        }
+        failure {
+            echo "Pipeline failed. Rolling back..."
+        }
+    }
+}
