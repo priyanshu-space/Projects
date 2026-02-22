@@ -1,0 +1,22 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  labels:
+    prometheus: k8s
+    role: alert-rules
+  name: production-app-slo
+spec:
+  groups:
+  - name: production-app.rules
+    rules:
+    - alert: ErrorBudgetBurningFast
+      expr: |
+        sum(rate(http_requests_total{status=~"5.."}[1h])) 
+        / 
+        sum(rate(http_requests_total[1h])) > 0.01
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Error budget for production-app is burning fast"
+        description: "The error rate is above 1% for the last hour, which will deplete the budget quickly."

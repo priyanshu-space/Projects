@@ -1,0 +1,36 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-production-standards
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+  - name: forbid-root-user
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    validate:
+      message: "Running as root is not allowed."
+      pattern:
+        spec:
+          containers:
+          - securityContext:
+              runAsNonRoot: true
+  - name: require-resource-limits
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    validate:
+      message: "CPU and memory limits are required."
+      pattern:
+        spec:
+          containers:
+          - resources:
+              limits:
+                cpu: "?*"
+                memory: "?*"
